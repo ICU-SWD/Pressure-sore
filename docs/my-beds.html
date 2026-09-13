@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>เตียงของฉัน · Pressure Sore Guard</title>
 <link rel="stylesheet" href="assets/style.css" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2f6fed" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 </head>
 <body>
 <nav id="nav"></nav>
@@ -14,17 +17,23 @@
       <h1>เตียงที่ฉันกำลังดูแล</h1>
       <span id="count" class="text-muted text-xs"></span>
     </div>
+    <div id="notifSetup" class="card"></div>
     <div id="list" class="grid-2"><p class="text-muted">กำลังโหลด...</p></div>
   </div>
 </main>
 
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/api.js"></script>
 <script src="assets/time.js"></script>
+<script src="assets/fcm.js"></script>
 <script src="assets/nav.js"></script>
 <script>
 Api.requireLogin();
 renderNav("my-beds");
+mountNotificationSetup(document.getElementById("notifSetup"));
+listenForegroundMessages();
 
 let stoppers = [];
 

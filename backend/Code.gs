@@ -4,7 +4,8 @@
  * Bind this script to a Google Sheet (Extensions > Apps Script from inside
  * the Sheet). It exposes a Web App (doGet/doPost) that the static frontend
  * in /docs calls, uses the Sheet itself as the database, and a time-driven
- * trigger to push LINE reminders when a patient's turning time is due.
+ * trigger to push browser (Firebase Cloud Messaging) reminders when a
+ * patient's turning time is due.
  *
  * See ../GAS_SYSTEM.md for full setup instructions.
  */
@@ -14,13 +15,14 @@
 // ----------------------------------------------------------------------
 
 var SHEETS = {
-  USERS: { name: "Users", headers: ["id", "name", "role", "pin_hash", "pin_salt", "line_user_id", "line_reg_code", "active", "created_at"] },
+  USERS: { name: "Users", headers: ["id", "name", "role", "pin_hash", "pin_salt", "active", "created_at"] },
   BEDS: { name: "Beds", headers: ["id", "code", "label", "ward", "patient_name", "patient_hn", "active", "created_at"] },
   TEMPLATES: { name: "Templates", headers: ["id", "name", "items_json", "rules_json", "is_active", "created_at"] },
   ASSESSMENTS: { name: "Assessments", headers: ["id", "template_id", "bed_id", "nurse_id", "answers_json", "total_score", "risk_level", "risk_color", "turn_interval_minutes", "created_at"] },
   CHECKINS: { name: "CheckIns", headers: ["id", "bed_id", "nurse_id", "assessment_id", "turn_interval_minutes", "started_at", "last_turned_at", "next_due_at", "status", "ended_at"] },
   TURNLOGS: { name: "TurnLogs", headers: ["id", "checkin_id", "nurse_id", "turned_at", "note"] },
-  NOTIFICATIONLOGS: { name: "NotificationLogs", headers: ["id", "checkin_id", "type", "sent_at"] }
+  NOTIFICATIONLOGS: { name: "NotificationLogs", headers: ["id", "checkin_id", "type", "sent_at"] },
+  FCMTOKENS: { name: "FcmTokens", headers: ["id", "user_id", "token", "created_at"] }
 };
 
 var TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12h shift
@@ -263,14 +265,6 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = parsePostBody_(e);
-
-    // LINE sends its own JSON shape ({ events: [...] }) to this same Web
-    // App URL when it's configured as the Messaging API webhook.
-    if (body && body.events) {
-      handleLineWebhook_(body);
-      return jsonOut_({ ok: true });
-    }
-
     var action = body.action;
     switch (action) {
       case "login":
@@ -281,6 +275,8 @@ function doPost(e) {
         return jsonOut_({ checkIn: turnCheckIn_(requireSession_(body.token), body.checkInId, body.note) });
       case "checkinEnd":
         return jsonOut_({ checkIn: endCheckIn_(requireSession_(body.token), body.checkInId) });
+      case "fcmTokenSave":
+        return jsonOut_({ ok: saveFcmToken_(requireSession_(body.token), body.fcmToken) });
       case "adminBedCreate":
         requireAdmin_(body.token);
         return jsonOut_({ bed: adminCreateBed_(body) });
@@ -318,13 +314,10 @@ function publicUser_(u) {
   return { id: u.id, name: u.name, role: u.role, active: u.active === true || u.active === "TRUE" };
 }
 
-// Same as publicUser_ but also includes the LINE registration/link status,
-// for the admin nurses page (never exposed to the public login list).
+// Same as publicUser_ for now — kept as a separate function so the admin
+// nurses page has a stable place to hang admin-only fields in the future.
 function adminUserView_(u) {
-  var v = publicUser_(u);
-  v.lineLinked = !!u.line_user_id;
-  v.lineRegCode = u.line_reg_code;
-  return v;
+  return publicUser_(u);
 }
 
 function publicUserList_() {
@@ -592,8 +585,6 @@ function adminCreateNurse_(body) {
     role: body.role === "ADMIN" ? "ADMIN" : "NURSE",
     pin_hash: ph.hash,
     pin_salt: ph.salt,
-    line_user_id: "",
-    line_reg_code: Math.floor(100000 + Math.random() * 900000).toString(),
     active: true,
     created_at: nowIso_()
   };
@@ -639,63 +630,124 @@ function adminCreateTemplate_(body) {
 }
 
 // ----------------------------------------------------------------------
-// LINE Messaging API integration
+// Firebase Cloud Messaging (FCM) integration
 //
-// LINE Notify was discontinued by LINE in 2025, so reminders go out via a
-// LINE Official Account using the Messaging API instead. See GAS_SYSTEM.md
-// for how to create the OA/channel and get a channel access token.
+// Reminders go out as real browser push notifications (work even with the
+// screen locked/app backgrounded, as long as the site was added to the
+// Home Screen on iOS — see GAS_SYSTEM.md) via FCM's HTTP v1 API. Apps
+// Script has no VAPID/ECDSA signing, so instead of raw Web Push we go
+// through Firebase: the browser registers for a token using Firebase's own
+// (Google-hosted) VAPID key, and this backend authenticates to FCM as a
+// service account using RS256-signed JWTs — Utilities.computeRsaSha256Signature
+// is something Apps Script *can* do natively.
 // ----------------------------------------------------------------------
 
-function lineChannelAccessToken_() {
-  return PropertiesService.getScriptProperties().getProperty("LINE_CHANNEL_ACCESS_TOKEN");
+function serviceAccount_() {
+  var raw = PropertiesService.getScriptProperties().getProperty("FCM_SERVICE_ACCOUNT_JSON");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
 }
 
-function sendLinePush_(lineUserId, text) {
-  var token = lineChannelAccessToken_();
-  if (!token || !lineUserId) return;
-  UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+// Utilities.base64EncodeWebSafe accepts either a string or a byte array.
+function base64UrlNoPad_(bytesOrString) {
+  return Utilities.base64EncodeWebSafe(bytesOrString).replace(/=+$/, "");
+}
+
+function fcmAccessToken_() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get("fcm_access_token");
+  if (cached) return cached;
+
+  var sa = serviceAccount_();
+  if (!sa) throw new Error("FCM_SERVICE_ACCOUNT_JSON script property is not set. See GAS_SYSTEM.md.");
+
+  var nowSec = Math.floor(Date.now() / 1000);
+  var header = { alg: "RS256", typ: "JWT" };
+  var claim = {
+    iss: sa.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: nowSec,
+    exp: nowSec + 3600
+  };
+  var signingInput = base64UrlNoPad_(JSON.stringify(header)) + "." + base64UrlNoPad_(JSON.stringify(claim));
+  var signature = Utilities.computeRsaSha256Signature(signingInput, sa.private_key);
+  var jwt = signingInput + "." + base64UrlNoPad_(signature);
+
+  var res = UrlFetchApp.fetch("https://oauth2.googleapis.com/token", {
     method: "post",
-    contentType: "application/json",
-    headers: { Authorization: "Bearer " + token },
-    payload: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text: text }] }),
+    payload: {
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt
+    },
     muteHttpExceptions: true
   });
+  var data = JSON.parse(res.getContentText());
+  if (!data.access_token) throw new Error("FCM auth failed: " + res.getContentText());
+
+  cache.put("fcm_access_token", data.access_token, 3300); // cache ~55 min (tokens last 1h)
+  return data.access_token;
 }
 
-function sendLineReply_(replyToken, text) {
-  var token = lineChannelAccessToken_();
-  if (!token) return;
-  UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
-    method: "post",
-    contentType: "application/json",
-    headers: { Authorization: "Bearer " + token },
-    payload: JSON.stringify({ replyToken: replyToken, messages: [{ type: "text", text: text }] }),
-    muteHttpExceptions: true
-  });
+function saveFcmToken_(session, fcmToken) {
+  if (!fcmToken) return false;
+  var existing = sheetToObjects_("FCMTOKENS").filter(function (r) { return r.token === fcmToken; })[0];
+  if (existing) {
+    updateById_("FCMTOKENS", existing.id, { user_id: session.userId, created_at: nowIso_() });
+  } else {
+    appendObject_("FCMTOKENS", { id: uuid_(), user_id: session.userId, token: fcmToken, created_at: nowIso_() });
+  }
+  return true;
 }
 
-/**
- * Nurse registration flow: admin generates a 6-digit line_reg_code per
- * nurse (see adminCreateNurse_). The nurse adds the OA as a friend and
- * sends that code as a plain text message; we link their LINE userId to
- * that Users row so future push reminders reach them.
- */
-function handleLineWebhook_(body) {
-  (body.events || []).forEach(function (event) {
-    if (event.type !== "message" || event.message.type !== "text") return;
-    var text = event.message.text.trim();
-    var lineUserId = event.source && event.source.userId;
-    if (!lineUserId) return;
+function sendFcmPush_(fcmToken, title, body, data) {
+  var sa = serviceAccount_();
+  if (!sa) return;
+  var accessToken;
+  try {
+    accessToken = fcmAccessToken_();
+  } catch (err) {
+    console.error(err);
+    return;
+  }
 
-    var users = sheetToObjects_("USERS");
-    var match = users.filter(function (u) { return u.line_reg_code === text; })[0];
-    if (match) {
-      updateById_("USERS", match.id, { line_user_id: lineUserId });
-      sendLineReply_(event.replyToken, "เชื่อมบัญชี LINE กับผู้ใช้งาน \"" + match.name + "\" สำเร็จแล้ว ✅ จะแจ้งเตือนเมื่อถึงเวลาพลิกตัวผู้ป่วยผ่านช่องทางนี้");
-    } else {
-      sendLineReply_(event.replyToken, "ไม่พบรหัสลงทะเบียนนี้ กรุณาขอรหัส 6 หลักจากผู้ดูแลระบบ (เมนูบัญชีผู้ใช้งาน) แล้วพิมพ์ส่งมาอีกครั้ง");
+  var res = UrlFetchApp.fetch(
+    "https://fcm.googleapis.com/v1/projects/" + sa.project_id + "/messages:send",
+    {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: "Bearer " + accessToken },
+      payload: JSON.stringify({
+        message: {
+          token: fcmToken,
+          notification: { title: title, body: body },
+          data: data || {},
+          webpush: { fcm_options: { link: (data && data.url) || "/" } }
+        }
+      }),
+      muteHttpExceptions: true
     }
-  });
+  );
+
+  if (res.getResponseCode() >= 400) {
+    var text = res.getContentText();
+    // Token is no longer valid (uninstalled, permission revoked, etc.) — remove it.
+    if (text.indexOf("UNREGISTERED") !== -1 || text.indexOf("NOT_FOUND") !== -1 || text.indexOf("INVALID_ARGUMENT") !== -1) {
+      var row = sheetToObjects_("FCMTOKENS").filter(function (r) { return r.token === fcmToken; })[0];
+      if (row) getSheet_("FCMTOKENS").deleteRow(row._row);
+    } else {
+      console.error("FCM send failed: " + text);
+    }
+  }
+}
+
+function sendReminderToNurse_(nurseId, title, body, data) {
+  var tokens = sheetToObjects_("FCMTOKENS").filter(function (r) { return r.user_id === nurseId; });
+  tokens.forEach(function (row) { sendFcmPush_(row.token, title, body, data); });
 }
 
 // ----------------------------------------------------------------------
@@ -727,13 +779,9 @@ function checkOverdueAndNotify() {
     if (!typeToSend) return;
 
     var bed = findById_("BEDS", checkIn.bed_id);
-    var nurse = findById_("USERS", checkIn.nurse_id);
-    if (nurse && nurse.line_user_id) {
-      var title = typeToSend === "OVERDUE" ? "⚠️ เลยเวลาพลิกตัว!" : "🔔 ถึงเวลาพลิกตัวผู้ป่วย";
-      var line = title + "\n" + (bed ? bed.label + " (" + bed.code + ")" : "") +
-        (bed && bed.patient_name ? "\nผู้ป่วย: " + bed.patient_name : "");
-      sendLinePush_(nurse.line_user_id, line);
-    }
+    var title = typeToSend === "OVERDUE" ? "⚠️ เลยเวลาพลิกตัว!" : "🔔 ถึงเวลาพลิกตัวผู้ป่วย";
+    var body = (bed ? bed.label + " (" + bed.code + ")" : "") + (bed && bed.patient_name ? " · " + bed.patient_name : "");
+    sendReminderToNurse_(checkIn.nurse_id, title, body, { checkInId: checkIn.id, url: "my-beds.html" });
 
     appendObject_("NOTIFICATIONLOGS", { id: uuid_(), checkin_id: checkIn.id, type: typeToSend, sent_at: now.toISOString() });
   });
@@ -765,8 +813,8 @@ function seedDemoData_() {
   var adminPin = makePinHash_("0000");
   appendObject_("USERS", {
     id: "seed-admin", name: "หัวหน้าพยาบาล (Admin)", role: "ADMIN",
-    pin_hash: adminPin.hash, pin_salt: adminPin.salt, line_user_id: "",
-    line_reg_code: "100000", active: true, created_at: nowIso_()
+    pin_hash: adminPin.hash, pin_salt: adminPin.salt,
+    active: true, created_at: nowIso_()
   });
 
   var nurseNames = ["พยาบาลสมศรี", "พยาบาลอรทัย", "พยาบาลวิภา"];
@@ -774,8 +822,8 @@ function seedDemoData_() {
     var p = makePinHash_("1234");
     appendObject_("USERS", {
       id: "seed-nurse-" + (i + 1), name: name, role: "NURSE",
-      pin_hash: p.hash, pin_salt: p.salt, line_user_id: "",
-      line_reg_code: String(100001 + i), active: true, created_at: nowIso_()
+      pin_hash: p.hash, pin_salt: p.salt,
+      active: true, created_at: nowIso_()
     });
   });
 

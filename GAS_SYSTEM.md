@@ -6,14 +6,16 @@
 - **หน้าเว็บ** — ไฟล์ static ล้วนๆ ใน `docs/` โฮสต์ฟรีผ่าน **GitHub Pages**
 - **หลังบ้าน/ฐานข้อมูล** — **Google Sheets** ผ่าน **Google Apps Script Web App** (`backend/Code.gs`)
   ทำหน้าที่เป็น API ให้หน้าเว็บเรียก
-- **แจ้งเตือน** — Apps Script ตั้งเวลาเช็คทุก 1 นาที แล้วส่งข้อความแจ้งเตือนผ่าน **LINE Official
-  Account (Messaging API)** ไปยังพยาบาลที่ดูแลอยู่ + มีเสียง/ไฮไลต์แจ้งเตือนในหน้าเว็บเองด้วย
-  ขณะเปิดแท็บค้างไว้ (สองช่องทางพร้อมกันตามที่ขอ)
+- **แจ้งเตือน** — **Push notification ในเบราว์เซอร์** (ไม่ใช้ LINE) ผ่าน **Firebase Cloud
+  Messaging (FCM)** ของ Google — Apps Script ตั้งเวลาเช็คทุก 1 นาที แล้วสั่ง FCM ส่งแจ้งเตือนไปยัง
+  อุปกรณ์ของพยาบาลที่ดูแลอยู่ + มีเสียง/ไฮไลต์แจ้งเตือนในหน้าเว็บเองด้วยขณะเปิดแท็บค้างไว้
+  (สองช่องทางพร้อมกัน)
 
-> **หมายเหตุสำคัญ:** LINE ได้ยกเลิกบริการ **LINE Notify** ไปแล้วตั้งแต่ปี 2025 ระบบนี้จึงใช้
-> **LINE Official Account + Messaging API** แทน ซึ่งเป็นวิธีที่ LINE ยังรองรับอยู่ในปัจจุบัน
-> การตั้งค่าจะมีขั้นตอนมากกว่า LINE Notify เดิมเล็กน้อย (ต้องสร้าง OA + เปิด Messaging API)
-> แต่ทำครั้งเดียวจบ
+> **ข้อจำกัดสำคัญที่ควรรู้ก่อนเริ่ม:** Push notification จะทำงานได้แม้ล็อกหน้าจอ/ปิดแอปไปแล้ว
+> บน **Android และคอมพิวเตอร์** ได้ทันทีหลังกดอนุญาต แต่บน **iPhone (iOS Safari)** ต้อง**เพิ่มเว็บนี้
+> ไปที่หน้าจอหลัก (Add to Home Screen) ก่อน** — เปิดผ่าน Safari ธรรมดาแล้วกดอนุญาตจะยังไม่ได้รับ
+> แจ้งเตือนตอนล็อกหน้าจอ เป็นข้อจำกัดของ Apple เอง ไม่ใช่ของระบบนี้ ควรแจ้งพยาบาลที่ใช้ iPhone ให้
+> เพิ่มไปหน้าจอหลักตั้งแต่ต้น (ขั้นตอนอยู่ด้านล่าง)
 
 ระบบนี้อยู่แยกจากต้นแบบ Next.js เดิม (โฟลเดอร์ `src/`, `prisma/` ฯลฯ) — ทั้งสองระบบอยู่ใน repo
 เดียวกันได้โดยไม่ชนกัน เลือกใช้ระบบไหนก็ได้ตามความเหมาะสม
@@ -36,8 +38,13 @@
         │
         │  time-driven trigger ทุก 1 นาที
         ▼
-[LINE Messaging API]  → พุชข้อความแจ้งเตือนไปมือถือพยาบาล
+[Firebase Cloud Messaging]  → พุชแจ้งเตือนไปเบราว์เซอร์/มือถือพยาบาลโดยตรง
 ```
+
+Apps Script เองเข้ารหัสแบบ VAPID (ที่ Web Push มาตรฐานต้องใช้) ไม่ได้ จึงให้ Firebase เป็นตัวกลาง
+จัดการเรื่องนี้แทน: ฝั่งเบราว์เซอร์ขอ "token อุปกรณ์" จาก Firebase โดยตรง ส่วน Apps Script ยืนยันตัวตน
+กับ FCM ด้วยกุญแจแบบ Service Account (เซ็นด้วย RSA ซึ่ง Apps Script ทำได้) แล้วสั่งส่งข้อความผ่าน
+FCM's HTTP v1 API
 
 ---
 
@@ -60,8 +67,8 @@
    "Go to (โปรเจกต์) (unsafe)" → Allow (ปกติของสคริปต์ที่เขียนเอง ไม่ใช่ของบุคคลที่สาม)
 3. เปิดแท็บ **Executions** (ไอคอนนาฬิกาด้านซ้าย) เพื่อดู log — ควรเห็น "Setup complete..."
 4. กลับไปที่ Google Sheet จะเห็นแท็บใหม่ถูกสร้างอัตโนมัติ (Users, Beds, Templates, Assessments,
-   CheckIns, TurnLogs, NotificationLogs) พร้อมข้อมูลตัวอย่าง (admin PIN `0000`, พยาบาล PIN `1234`,
-   เตียง ICU-01–06)
+   CheckIns, TurnLogs, NotificationLogs, FcmTokens) พร้อมข้อมูลตัวอย่าง (admin PIN `0000`, พยาบาล
+   PIN `1234`, เตียง ICU-01–06)
 
 `setup()` ทำ 3 อย่าง: สร้างชีตที่จำเป็นทั้งหมด, ใส่ข้อมูลตัวอย่าง (เฉพาะตอนที่ชีต Users ว่างอยู่),
 และตั้ง trigger ให้รันฟังก์ชัน `checkOverdueAndNotify` ทุก 1 นาที
@@ -80,20 +87,54 @@
 > **Deploy → Manage deployments → แก้ไข (ไอคอนดินสอ) → Version: New version → Deploy** ใหม่ทุกครั้ง
 > (แก้โค้ดอย่างเดียวไม่พอ ต้อง deploy version ใหม่ด้วย)
 
-## ขั้นตอนที่ 4 — ตั้งค่าหน้าเว็บให้ชี้ไปที่ Apps Script
+## ขั้นตอนที่ 4 — สร้าง Firebase project (สำหรับ Push notification)
 
-เปิดไฟล์ `docs/assets/config.js` ในโปรเจกต์นี้ แก้บรรทัด `API_URL` ให้เป็น Web App URL ที่ได้จาก
-ขั้นตอนที่ 3:
+1. ไปที่ [console.firebase.google.com](https://console.firebase.google.com/) → **Add project** →
+   ตั้งชื่อ เช่น "pressure-sore-guard" → ปิด Google Analytics ได้ (ไม่จำเป็น) → Create project
+2. ในหน้าโปรเจกต์ กดไอคอน **</> (Web)** เพื่อเพิ่มเว็บแอป → ตั้งชื่อ เช่น "PS Guard Web" → Register
+   app → จะเห็นโค้ด `firebaseConfig = { apiKey: ..., authDomain: ..., ... }` → **คัดลอกค่าทั้งหมด
+   ไว้** (ใช้ในขั้นตอนที่ 5)
+3. เมนูซ้าย ⚙️ (Project settings) → แท็บ **Cloud Messaging** → เลื่อนไปที่ "Web configuration" →
+   ถ้ายังไม่มี "Web Push certificates" ให้กด **Generate key pair** → คัดลอกค่า **Key pair**
+   (เป็นสตริงยาวๆ นี่คือ `FIREBASE_VAPID_KEY`)
+4. แท็บ **Service accounts** (อยู่ในหน้า Project settings เดียวกัน) → กด **Generate new private
+   key** → ยืนยัน → จะได้ไฟล์ `.json` ดาวน์โหลดลงเครื่อง (เก็บไฟล์นี้ให้ดี ห้ามเผยแพร่/commit ขึ้น
+   GitHub เด็ดขาด เพราะเป็นกุญแจลับที่ใช้ยืนยันตัวตนกับ Google)
+
+## ขั้นตอนที่ 5 — ตั้งค่าหน้าเว็บและ Apps Script ให้ใช้ Firebase
+
+**5.1 หน้าเว็บ** — เปิดไฟล์ `docs/assets/config.js` แก้ให้ครบทั้ง 3 ส่วน:
 
 ```js
-window.APP_CONFIG = {
-  API_URL: "https://script.google.com/macros/s/XXXXXXXX/exec",
+self.APP_CONFIG = {
+  API_URL: "https://script.google.com/macros/s/XXXXXXXX/exec", // จากขั้นตอนที่ 3
+  firebaseConfig: {
+    apiKey: "...",            // จากขั้นตอนที่ 4.2 (firebaseConfig)
+    authDomain: "...",
+    projectId: "...",
+    storageBucket: "...",
+    messagingSenderId: "...",
+    appId: "...",
+  },
+  FIREBASE_VAPID_KEY: "...",  // จากขั้นตอนที่ 4.3 (Key pair)
 };
 ```
 
-จากนั้น commit และ push ไฟล์นี้ขึ้น GitHub
+เปิดไฟล์ `docs/firebase-messaging-sw.js` — ไม่ต้องแก้อะไร (มันโหลดค่าเดียวกันจาก `config.js`
+อัตโนมัติผ่าน `importScripts`)
 
-## ขั้นตอนที่ 5 — เปิดใช้งาน GitHub Pages
+**5.2 Apps Script** — เปิดไฟล์ `.json` ที่ดาวน์โหลดมาจากขั้นตอนที่ 4.4 ด้วยโปรแกรมแก้ไขข้อความ
+(Notepad, TextEdit ฯลฯ) → เลือกทั้งหมด → คัดลอก → ไปที่ Apps Script editor → ⚙️ **Project
+Settings → Script Properties** → Add script property:
+
+- Property: `FCM_SERVICE_ACCOUNT_JSON`
+- Value: (วางเนื้อหาไฟล์ JSON ทั้งไฟล์ที่คัดลอกมา)
+- กด Save script properties
+
+จากนั้น commit และ push ไฟล์ `docs/assets/config.js` ที่แก้แล้วขึ้น GitHub (**อย่า** commit ไฟล์
+service account `.json` ขึ้น GitHub เด็ดขาด — ใส่เฉพาะใน Apps Script Script Properties เท่านั้น)
+
+## ขั้นตอนที่ 6 — เปิดใช้งาน GitHub Pages
 
 1. ไปที่ repo บน GitHub → **Settings → Pages**
 2. หัวข้อ "Build and deployment" → Source: **Deploy from a branch**
@@ -102,55 +143,44 @@ window.APP_CONFIG = {
 4. กด **Save** — รอ 1-2 นาที จะได้ลิงก์เว็บไซต์รูปแบบ `https://<org>.github.io/<repo>/`
 5. เปิดลิงก์นั้น ควรเจอหน้า login ของระบบ
 
-## ขั้นตอนที่ 6 — ตั้งค่า LINE Official Account (Messaging API)
+## ขั้นตอนที่ 7 — ให้พยาบาลเปิดการแจ้งเตือน
 
-1. ไปที่ [LINE Official Account Manager](https://manager.line.biz/) → สร้าง OA ใหม่ (ฟรี) เช่น
-   ชื่อ "ICU แจ้งเตือนพลิกตัว"
-2. ไปที่ [LINE Developers Console](https://developers.line.biz/console/) → เลือก provider →
-   จะเห็น Channel ของ OA ที่สร้างไว้ (ประเภท Messaging API) — ถ้ายังไม่มีให้เปิดใช้งาน Messaging
-   API จากหน้า OA Manager ก่อน (Settings → Messaging API → Enable)
-3. ในหน้า Channel (LINE Developers Console) แท็บ **Messaging API**:
-   - คัดลอก **Channel access token** (กด Issue ถ้ายังไม่มี) → เก็บไว้ใช้ขั้นตอนถัดไป
-   - ตั้ง **Webhook URL** เป็น Web App URL เดียวกับขั้นตอนที่ 3 (ลงท้ายด้วย `/exec`) → กด Verify
-     (ควรขึ้นสำเร็จ) → เปิดสวิตช์ **Use webhook**
-   - ปิดสวิตช์ **Auto-reply messages** และ **Greeting messages** ได้ (ไม่จำเป็นสำหรับระบบนี้)
-4. กลับไปที่ Apps Script editor → เมนูซ้าย ⚙️ **Project Settings** → เลื่อนลงไปที่
-   **Script Properties** → Add script property:
-   - Property: `LINE_CHANNEL_ACCESS_TOKEN`
-   - Value: (วาง Channel access token ที่คัดลอกไว้)
-   - กด Save script properties
+ไม่ต้องมีขั้นตอนลงทะเบียนจาก Admin — แต่ละคนเปิดเองจากอุปกรณ์ตัวเอง:
 
-## ขั้นตอนที่ 7 — ให้พยาบาลเชื่อมบัญชี LINE
-
-1. Admin ล็อกอินเข้าเว็บ (`index.html`) → เมนู **จัดการระบบ → บัญชีผู้ใช้งาน**
-2. แต่ละคนที่ยังไม่เชื่อม LINE จะเห็น "รหัส: XXXXXX" (6 หลัก) ในตาราง
-3. บอกพยาบาลให้:
-   - สแกน QR code เพิ่มเพื่อนของ LINE OA (หาได้จาก LINE Official Account Manager →
-     Home → QR code) หรือแอดมินแชร์ลิงก์เพิ่มเพื่อนให้
-   - พิมพ์ส่งรหัส 6 หลักของตัวเองเป็นข้อความคุยกับ OA
-   - LINE OA จะตอบกลับยืนยันทันทีว่าเชื่อมบัญชีสำเร็จ และสถานะในตาราง admin จะเปลี่ยนเป็น
-     "เชื่อมแล้ว"
+1. ล็อกอินเข้าเว็บ → ไปหน้า **"เตียงของฉัน"** (หรือหน้า check-in ก็มีปุ่มเดียวกัน)
+2. กดปุ่ม **"🔔 เปิดการแจ้งเตือนเมื่อครบเวลาพลิกตัว"** → อนุญาต (Allow) เมื่อเบราว์เซอร์ถาม
+3. **สำคัญสำหรับ iPhone**: ก่อนกดปุ่มข้อ 2 ต้องเพิ่มเว็บไปหน้าจอหลักก่อน — เปิดเว็บด้วย **Safari**
+   → กดปุ่ม Share (ไอคอนสี่เหลี่ยมมีลูกศรชี้ขึ้น) → เลื่อนหาแล้วกด **"Add to Home Screen"** → เปิด
+   แอปจากไอคอนที่หน้าจอหลัก (ไม่ใช่จาก Safari) → ค่อยกดปุ่มเปิดการแจ้งเตือนในข้อ 2
 
 ## ขั้นตอนที่ 8 — ทดสอบระบบ
 
 1. เปิดเว็บ GitHub Pages → ล็อกอิน admin (PIN `0000`) → ตั้งค่าเตียง/แบบประเมิน/บัญชีพยาบาลจริง
    ที่เมนู "จัดการระบบ" → พิมพ์ QR ที่หน้า "เตียง & QR Code" ไปติดหัวเตียง
 2. ล็อกอินด้วยบัญชีพยาบาล (PIN `1234` สำหรับบัญชีตัวอย่าง) → เปิดลิงก์ QR (หรือ
-   `checkin.html?bed=ICU-01`) → ทำแบบประเมิน → Check-in
-3. รอถึงเวลาพลิกตัว (หรือแก้ค่า `turnIntervalMinutes` ในแบบประเมินให้สั้นๆ เช่น 1-2 นาทีเพื่อ
-   ทดสอบ) → ควรได้รับข้อความ LINE แจ้งเตือน และถ้าเปิดแท็บ "เตียงของฉัน"/"แดชบอร์ด" ค้างไว้จะมี
-   เสียงเตือน + ป้ายสีแดงขึ้นทันทีที่เลยเวลา
+   `checkin.html?bed=ICU-01`) → ทำแบบประเมิน → Check-in → เปิดการแจ้งเตือนตามขั้นตอนที่ 7
+3. ล็อกหน้าจอ (หรือสลับไปแอปอื่น) รอถึงเวลาพลิกตัว (หรือแก้ค่า `turnIntervalMinutes` ในแบบประเมิน
+   ให้สั้นๆ เช่น 1-2 นาทีเพื่อทดสอบ) → ควรได้รับแจ้งเตือนขึ้นที่หน้าจอแม้ล็อกอยู่ และถ้าเปิดแท็บ
+   "เตียงของฉัน"/"แดชบอร์ด" ค้างไว้จะมีเสียงเตือน + ป้ายสีแดงขึ้นทันทีที่เลยเวลาด้วย
 
 ---
 
 ## ข้อจำกัด / สิ่งที่ควรรู้
 
+- **iPhone ต้อง Add to Home Screen ก่อน** ถึงจะได้รับแจ้งเตือนตอนล็อกหน้าจอ/ปิดแอป (ข้อจำกัดของ
+  iOS Safari เอง) — ถ้าพยาบาลเปิดผ่าน Safari ธรรมดาไว้ จะได้รับแจ้งเตือนเฉพาะตอนแอปเปิดอยู่หน้าจอ
+  เท่านั้น
 - **ความถี่การเช็คแจ้งเตือน**: Apps Script time-driven trigger ละเอียดสุดคือทุก 1 นาที (ตั้งไว้
   แล้วใน `setup()`) จึงอาจคลาดเคลื่อนได้ไม่เกิน ~1 นาทีจากเวลาที่กำหนดจริง
-- **Apps Script quota**: บัญชี Google ส่วนบุคคล/Workspace ฟรี มีโควต้าการรันสคริปต์ต่อวันจำกัด
-  (ปกติเพียงพอสำหรับหน่วยงานขนาดเล็ก-กลาง) และ URL Fetch (เรียก LINE API) มีโควต้าต่อวันเช่นกัน —
-  ถ้าจำนวนเตียง/การแจ้งเตือนต่อวันสูงมาก ควรพิจารณาอัปเกรด Google Workspace หรือย้ายไประบบที่มี
-  เซิร์ฟเวอร์ของตัวเอง (เช่นระบบ Next.js ในโฟลเดอร์ `src/`)
+- **Apps Script quota**: บัญชี Google ส่วนบุคคล/Workspace ฟรี มีโควต้าการรันสคริปต์และ URL Fetch
+  ต่อวันจำกัด (ปกติเพียงพอสำหรับหน่วยงานขนาดเล็ก-กลาง) — ถ้าจำนวนเตียง/การแจ้งเตือนต่อวันสูงมาก
+  ควรพิจารณาอัปเกรด Google Workspace หรือย้ายไประบบที่มีเซิร์ฟเวอร์ของตัวเอง (เช่นระบบ Next.js ใน
+  โฟลเดอร์ `src/`)
+- **ห้าม commit ไฟล์ service account `.json` ขึ้น GitHub**: เป็นกุญแจลับที่ใครก็ตามที่มีไฟล์นี้
+  สามารถส่ง push notification ปลอมผ่านโปรเจกต์ Firebase ของคุณได้ — เก็บไว้เฉพาะใน Apps Script
+  Script Properties (ซึ่งไม่ถูก commit ขึ้น GitHub อยู่แล้วโดยธรรมชาติ) ค่าที่อยู่ใน
+  `docs/assets/config.js` (firebaseConfig, VAPID key) ปลอดภัยที่จะเผยแพร่ได้ตามปกติ — เป็นค่า
+  สาธารณะสำหรับระบุตัวโปรเจกต์ ไม่ใช่กุญแจลับ
 - **Token ใน URL**: เพื่อเลี่ยงปัญหา CORS preflight ของ Apps Script Web App คำขอ GET จะแนบ
   session token เป็น query parameter (ไม่ใช่ cookie) — เหมาะกับการใช้งานภายในหน่วยงานที่เข้าถึง
   ผ่าน HTTPS อยู่แล้ว แต่ไม่ควรถือเป็นระดับความปลอดภัยเดียวกับระบบที่มี backend เต็มรูปแบบ

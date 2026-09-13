@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>บัญชีผู้ใช้งาน · Pressure Sore Guard</title>
 <link rel="stylesheet" href="assets/style.css" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2f6fed" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 </head>
 <body>
 <nav id="nav"></nav>
@@ -26,14 +29,14 @@
     </form>
 
     <p class="text-muted text-xs">
-      รหัสลงทะเบียน LINE: ให้พยาบาลเพิ่มเพื่อน LINE Official Account ของหน่วยงาน แล้วพิมพ์ส่ง "รหัสลงทะเบียน" ของตัวเอง
-      (แสดงในตารางด้านล่าง) เพื่อรับการแจ้งเตือนผ่าน LINE — ดูวิธีตั้งค่า LINE OA ใน GAS_SYSTEM.md
+      การแจ้งเตือนผ่านเบราว์เซอร์ (Push) เป็นการตั้งค่ารายอุปกรณ์ — แต่ละคนกดปุ่ม "เปิดการแจ้งเตือน"
+      เองจากอุปกรณ์ของตัวเองได้ที่หน้า "เตียงของฉัน" หรือหน้า Check-in ไม่ต้องตั้งค่าจากฝั่ง Admin
     </p>
 
     <div class="card" style="overflow-x:auto">
       <table>
-        <thead><tr><th>ชื่อ</th><th>บทบาท</th><th>สถานะ</th><th>LINE</th><th>การจัดการ</th></tr></thead>
-        <tbody id="tbody"><tr><td colspan="5" class="text-muted">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ชื่อ</th><th>บทบาท</th><th>สถานะ</th><th>การจัดการ</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="4" class="text-muted">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -55,7 +58,6 @@ async function load() {
       <td><b>${u.name}</b></td>
       <td>${u.role === "ADMIN" ? "ผู้ดูแลระบบ" : "พยาบาล"}</td>
       <td><span class="badge ${u.active ? "badge-low" : ""}">${u.active ? "ใช้งาน" : "ปิดใช้งาน"}</span></td>
-      <td class="text-xs">${u.lineLinked ? '<span class="badge badge-low">เชื่อมแล้ว</span>' : `รหัส: <b>${u.lineRegCode || "-"}</b>`}</td>
       <td class="text-xs">
         <a href="#" data-pin="${u.id}" data-name="${u.name}">ตั้ง PIN ใหม่</a> ·
         <a href="#" data-toggle="${u.id}" data-active="${u.active}">${u.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</a>

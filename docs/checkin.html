@@ -5,19 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Check-in · Pressure Sore Guard</title>
 <link rel="stylesheet" href="assets/style.css" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2f6fed" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 </head>
 <body>
 <nav id="nav"></nav>
 <main>
   <div id="app" class="stack"><p class="text-muted">กำลังโหลด...</p></div>
+  <div id="notifSetup" class="card" style="margin-top:16px"></div>
 </main>
 
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/api.js"></script>
 <script src="assets/time.js"></script>
 <script src="assets/checklist.js"></script>
+<script src="assets/fcm.js"></script>
 <script src="assets/nav.js"></script>
 <script>
+mountNotificationSetup(document.getElementById("notifSetup"));
+listenForegroundMessages();
 Api.requireLogin();
 renderNav();
 
