@@ -12,7 +12,7 @@
 // firebase-messaging-sw.js (a service worker, which has no `window`) via
 // importScripts — one config, no risk of the two copies drifting apart.
 self.APP_CONFIG = {
-  API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
+  API_URL: "https://script.google.com/macros/s/AKfycbwXUkT6AfXuMH3Dk7X_lomJLEwe8toFJKYTzmkht8tFVb5yZP_aW9g5olpk4iM3DLyQ/exec",
   firebaseConfig: {
     apiKey: "AIzaSyCfO7L1uWM0QQbPqby--nqMXWFNqD71Nsg",
     authDomain: "pressure-sore-guard.firebaseapp.com",
