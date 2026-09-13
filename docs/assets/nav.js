@@ -4,6 +4,7 @@ function renderNav(active) {
   if (!mount || !user) return;
 
   const links = [
+    { key: "scan", href: "scan.html", label: "📷 สแกน QR" },
     { key: "dashboard", href: "dashboard.html", label: "แดชบอร์ด" },
     { key: "my-beds", href: "my-beds.html", label: "เตียงของฉัน" },
   ];

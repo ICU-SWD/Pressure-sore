@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>สแกน QR · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2f6fed" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <h1>สแกน QR เพื่อ Check-in</h1>
+    <p class="text-muted text-xs">
+      เล็งกล้องไปที่ QR code ที่ติดอยู่หัวเตียง ระบบจะพาไปหน้า Check-in ของเตียงนั้นให้อัตโนมัติ
+    </p>
+
+    <div class="card">
+      <div id="reader"></div>
+      <p id="scanError" class="text-danger text-xs" style="display:none;margin-top:8px"></p>
+    </div>
+
+    <div class="card">
+      <p class="text-xs text-muted" style="margin-bottom:8px">หรือพิมพ์รหัสเตียงเอง (กรณีกล้องใช้งานไม่ได้)</p>
+      <form id="manualForm" class="row">
+        <input id="manualCode" class="input" placeholder="เช่น ICU-01" style="flex:1" />
+        <button class="btn btn-secondary" type="submit">ไป Check-in</button>
+      </form>
+    </div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireLogin();
+renderNav("scan");
+
+const errorEl = document.getElementById("scanError");
+
+// Our printed QR codes encode a full checkin.html?bed=CODE URL (see
+// admin-beds.html). Only auto-navigate for links that point back at this
+// same site's checkin page — anything else is shown as an error instead of
+// silently following an arbitrary scanned URL.
+function goToScannedText(text) {
+  const basePath = location.pathname.replace(/scan\.html$/, "");
+  let url;
+  try {
+    url = new URL(text, location.origin);
+  } catch (e) {
+    showError("QR code นี้ไม่ใช่ QR ของระบบนี้ (สแกนไม่สำเร็จ ลองใหม่อีกครั้ง)");
+    return;
+  }
+
+  const isOwnCheckinLink =
+    url.origin === location.origin &&
+    url.pathname === basePath + "checkin.html" &&
+    url.searchParams.get("bed");
+
+  if (isOwnCheckinLink) {
+    location.href = url.pathname + url.search;
+    return;
+  }
+  showError("QR code นี้ไม่ใช่ QR สำหรับ check-in เตียงของระบบนี้");
+}
+
+function showError(msg) {
+  errorEl.textContent = msg;
+  errorEl.style.display = "block";
+}
+
+const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 }, false);
+scanner.render(
+  (decodedText) => {
+    scanner.clear().catch(() => {});
+    goToScannedText(decodedText);
+  },
+  () => {
+    // called continuously while no QR is in frame — nothing to do
+  }
+);
+
+document.getElementById("manualForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const code = document.getElementById("manualCode").value.trim();
+  if (!code) return;
+  location.href = `checkin.html?bed=${encodeURIComponent(code)}`;
+});
+</script>
+</body>
+</html>
