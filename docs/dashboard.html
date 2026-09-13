@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>แดชบอร์ด · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <div class="row-between">
+      <h1>แดชบอร์ดกลาง — ติดตามการดูแลผู้ป่วย</h1>
+      <select id="wardFilter" class="input" style="width:auto;display:none"></select>
+    </div>
+
+    <div class="grid-3" id="stats"></div>
+
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>เตียง</th><th>ผู้ป่วย</th><th>พยาบาลผู้ดูแล</th><th>ความเสี่ยง</th><th>พลิกตัวล่าสุด</th><th>รอบถัดไป</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="6" class="text-muted">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/time.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireLogin();
+renderNav("dashboard");
+
+let stoppers = [];
+let allCheckIns = [];
+let allEmpty = [];
+let wardFilter = "all";
+
+async function load() {
+  const data = await Api.get("checkinsActive");
+  allCheckIns = data.checkIns;
+  allEmpty = data.bedsWithoutCheckIn;
+  populateWardFilter();
+  render();
+}
+
+function populateWardFilter() {
+  const wards = new Set();
+  allCheckIns.forEach((c) => c.bed.ward && wards.add(c.bed.ward));
+  allEmpty.forEach((b) => b.ward && wards.add(b.ward));
+  const sel = document.getElementById("wardFilter");
+  if (wards.size === 0) return;
+  sel.style.display = "";
+  const current = sel.value || "all";
+  sel.innerHTML = '<option value="all">ทุกวอร์ด</option>' + Array.from(wards).map((w) => `<option value="${w}">${w}</option>`).join("");
+  sel.value = current;
+}
+
+function render() {
+  stoppers.forEach((s) => s());
+  stoppers = [];
+
+  const filtered = wardFilter === "all" ? allCheckIns : allCheckIns.filter((c) => c.bed.ward === wardFilter);
+  const filteredEmpty = wardFilter === "all" ? allEmpty : allEmpty.filter((b) => b.ward === wardFilter);
+  const overdue = filtered.filter((c) => new Date(c.nextDueAt).getTime() <= Date.now()).length;
+  const nurses = new Set(filtered.map((c) => c.nurse && c.nurse.name));
+
+  document.getElementById("stats").innerHTML = `
+    ${statCard("กำลังดูแล", filtered.length)}
+    ${statCard("เลยเวลาพลิกตัว", overdue, overdue > 0)}
+    ${statCard("เตียงว่าง/ยังไม่ check-in", filteredEmpty.length)}
+    ${statCard("พยาบาลออนดิวตี้", nurses.size)}
+  `;
+
+  const tbody = document.getElementById("tbody");
+  if (filtered.length === 0 && filteredEmpty.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center">ไม่มีข้อมูล</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML =
+    filtered
+      .map(
+        (c, i) => `
+    <tr id="row-${i}">
+      <td><b>${c.bed.label}</b><div class="text-xs text-muted">${c.bed.code}</div></td>
+      <td>${c.bed.patient_name || "-"}</td>
+      <td>${c.nurse ? c.nurse.name : "-"}</td>
+      <td>${c.assessment ? `<span class="badge" style="background:${c.assessment.riskColor}">${c.assessment.riskLevel} (${c.assessment.totalScore})</span>` : "-"}</td>
+      <td class="text-xs text-muted">${formatThaiDateTime(c.lastTurnedAt)}</td>
+      <td><span id="cd-${i}" class="badge"></span></td>
+    </tr>`
+      )
+      .join("") +
+    filteredEmpty
+      .map(
+        (b) => `
+    <tr>
+      <td><b>${b.label}</b></td>
+      <td colspan="4" class="text-muted">ยังไม่มีพยาบาล check-in</td>
+    </tr>`
+      )
+      .join("");
+
+  filtered.forEach((c, i) => {
+    stoppers.push(
+      mountCountdown(document.getElementById(`cd-${i}`), c.nextDueAt, {
+        alertSound: false,
+        onOverdue: () => document.getElementById(`row-${i}`).classList.add("row-overdue"),
+      })
+    );
+    if (new Date(c.nextDueAt).getTime() <= Date.now()) {
+      document.getElementById(`row-${i}`).classList.add("row-overdue");
+    }
+  });
+}
+
+function statCard(label, value, danger) {
+  return `<div class="card"><p class="text-xs text-muted">${label}</p><p style="font-size:1.5rem;font-weight:700;margin:4px 0 0;${danger ? "color:#dc2626" : ""}">${value}</p></div>`;
+}
+
+document.getElementById("wardFilter").addEventListener("change", (e) => {
+  wardFilter = e.target.value;
+  render();
+});
+
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

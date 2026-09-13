@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Check-in · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div id="app" class="stack"><p class="text-muted">กำลังโหลด...</p></div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/time.js"></script>
+<script src="assets/checklist.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireLogin();
+renderNav();
+
+const bedCode = new URLSearchParams(location.search).get("bed");
+const app = document.getElementById("app");
+let items = [], rules = [];
+let answers = {};
+let stopCountdown = null;
+
+if (!bedCode) {
+  app.innerHTML = '<p class="text-danger">ไม่พบรหัสเตียง (ต้องเปิดผ่านลิงก์ checkin.html?bed=รหัสเตียง)</p>';
+} else {
+  init();
+}
+
+async function init() {
+  const [bedRes, tplRes] = await Promise.all([
+    Api.get("bedInfo", { code: bedCode }).catch((e) => ({ error: e.message })),
+    Api.get("templateActive").catch(() => ({ template: null })),
+  ]);
+  if (bedRes.error) {
+    app.innerHTML = `<p class="text-danger">${bedRes.error === "bed_not_found" ? "ไม่พบเตียงนี้ในระบบ" : bedRes.error}</p>`;
+    return;
+  }
+  if (tplRes.template) {
+    items = tplRes.template.items;
+    rules = tplRes.template.rules;
+  }
+  render(bedRes, "choose");
+}
+
+function render(data, mode) {
+  if (stopCountdown) stopCountdown();
+  const { bed, activeCheckIn, latestAssessment } = data;
+
+  let html = `
+    <div class="card">
+      <h1>${bed.label}</h1>
+      <p class="text-muted">รหัสเตียง ${bed.code}${bed.ward ? " · " + bed.ward : ""}</p>
+      ${bed.patient_name ? `<p>ผู้ป่วย: <b>${bed.patient_name}</b> ${bed.patient_hn ? `<span class="text-muted">(${bed.patient_hn})</span>` : ""}</p>` : ""}
+    </div>
+  `;
+
+  if (activeCheckIn) {
+    html += `
+      <div class="card stack">
+        <h2>กำลังดูแลอยู่โดย ${activeCheckIn.nurse ? activeCheckIn.nurse.name : "-"}</h2>
+        <div class="row">
+          <span id="countdown" class="badge"></span>
+          <span class="text-muted text-xs">ทุก ${activeCheckIn.turnIntervalMinutes} นาที</span>
+        </div>
+        ${activeCheckIn.assessment ? riskBadge(activeCheckIn.assessment) : ""}
+        <div class="row">
+          <button id="turnBtn" class="btn btn-primary">✅ พลิกตัวแล้ว (รีเซ็ตเวลา)</button>
+          <button id="endBtn" class="btn btn-secondary">สิ้นสุดการดูแล</button>
+        </div>
+      </div>
+    `;
+  } else if (mode === "choose") {
+    html += `
+      <div class="card stack">
+        <h2>Check-in เริ่มดูแลเตียงนี้</h2>
+        ${
+          latestAssessment
+            ? `<div class="card" style="background:#f8fafc">
+                <p class="text-xs">ผลประเมินล่าสุด:</p>
+                ${riskBadge(latestAssessment)}
+                <p class="text-muted text-xs" style="margin-top:6px">ประเมินโดย ${latestAssessment.nurse ? latestAssessment.nurse.name : "-"} เมื่อ ${formatThaiDateTime(latestAssessment.createdAt)}</p>
+                <button id="reuseBtn" class="btn btn-primary" style="margin-top:10px">ใช้ผลประเมินนี้ &amp; Check in</button>
+              </div>`
+            : '<p class="text-muted text-xs">ยังไม่มีผลประเมินก่อนหน้าสำหรับเตียงนี้</p>'
+        }
+        <button id="newFormBtn" class="btn btn-secondary">📋 ทำแบบประเมินใหม่</button>
+        <p id="formError" class="text-danger text-xs" style="display:none"></p>
+      </div>
+    `;
+  } else if (mode === "form") {
+    html += `<div class="card stack"><h2>แบบประเมินความเสี่ยงแผลกดทับ</h2><div id="itemsMount" class="stack"></div>
+      <div id="preview"></div>
+      <p id="formError" class="text-danger text-xs" style="display:none"></p>
+      <div class="row"><button id="backBtn" class="btn btn-secondary">ย้อนกลับ</button><button id="submitBtn" class="btn btn-primary" disabled>บันทึก &amp; Check in</button></div>
+      </div>`;
+  }
+
+  app.innerHTML = html;
+
+  if (activeCheckIn) {
+    stopCountdown = mountCountdown(document.getElementById("countdown"), activeCheckIn.nextDueAt);
+    document.getElementById("turnBtn").addEventListener("click", async () => {
+      await Api.post("checkinTurn", { checkInId: activeCheckIn.id });
+      refresh();
+    });
+    document.getElementById("endBtn").addEventListener("click", async () => {
+      await Api.post("checkinEnd", { checkInId: activeCheckIn.id });
+      refresh();
+    });
+  } else if (mode === "choose") {
+    if (latestAssessment) {
+      document.getElementById("reuseBtn").addEventListener("click", () =>
+        submitCheckIn({ mode: "reuse", reuseAssessmentId: latestAssessment.id })
+      );
+    }
+    document.getElementById("newFormBtn").addEventListener("click", () => render(data, "form"));
+  } else if (mode === "form") {
+    answers = {};
+    const mount = document.getElementById("itemsMount");
+    mount.innerHTML = items
+      .map(
+        (item) => `
+      <div>
+        <p class="text-xs" style="font-weight:600;margin-bottom:6px">${item.question}</p>
+        <div class="grid-2">
+          ${item.options
+            .map(
+              (opt, idx) => `
+            <label class="option-card" data-item="${item.id}" data-idx="${idx}">
+              <span>${opt.label}</span>
+              <span class="option-score">${opt.score}</span>
+            </label>`
+            )
+            .join("")}
+        </div>
+      </div>`
+      )
+      .join("");
+
+    mount.querySelectorAll(".option-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const itemId = card.dataset.item;
+        const idx = Number(card.dataset.idx);
+        answers[itemId] = idx;
+        mount.querySelectorAll(`.option-card[data-item="${itemId}"]`).forEach((c) => c.classList.remove("selected"));
+        card.classList.add("selected");
+        updatePreview();
+      });
+    });
+
+    document.getElementById("backBtn").addEventListener("click", () => render(data, "choose"));
+    document.getElementById("submitBtn").addEventListener("click", () => submitCheckIn({ mode: "new", answers }));
+  }
+
+  function updatePreview() {
+    const answeredAll = items.every((i) => answers[i.id] !== undefined);
+    document.getElementById("submitBtn").disabled = !answeredAll;
+    if (!answeredAll || rules.length === 0) {
+      document.getElementById("preview").innerHTML = "";
+      return;
+    }
+    const total = scoreAnswers(items, answers);
+    const rule = matchRiskRule(rules, total);
+    document.getElementById("preview").innerHTML = `
+      <div class="card text-xs" style="background:#f8fafc">
+        คะแนนรวม ${total} → <span class="badge" style="background:${rule.color}">${rule.label}</span>
+        (พลิกตัวทุก ${rule.turnIntervalMinutes} นาที)
+      </div>`;
+  }
+}
+
+function riskBadge(a) {
+  return `<span class="badge" style="background:${a.riskColor}">คะแนน ${a.totalScore} · ${a.riskLevel} · ทุก ${a.turnIntervalMinutes} นาที</span>`;
+}
+
+async function submitCheckIn(payload) {
+  const errorEl = document.getElementById("formError");
+  try {
+    await Api.post("checkinCreate", { bedCode, ...payload });
+    location.href = "my-beds.html";
+  } catch (e) {
+    if (errorEl) {
+      errorEl.textContent = e.message;
+      errorEl.style.display = "block";
+    }
+  }
+}
+
+async function refresh() {
+  const bedRes = await Api.get("bedInfo", { code: bedCode });
+  render(bedRes, "choose");
+}
+</script>
+</body>
+</html>

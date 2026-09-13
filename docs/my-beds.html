@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>เตียงของฉัน · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <div class="row-between">
+      <h1>เตียงที่ฉันกำลังดูแล</h1>
+      <span id="count" class="text-muted text-xs"></span>
+    </div>
+    <div id="list" class="grid-2"><p class="text-muted">กำลังโหลด...</p></div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/time.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireLogin();
+renderNav("my-beds");
+
+let stoppers = [];
+
+async function load() {
+  stoppers.forEach((s) => s());
+  stoppers = [];
+  const data = await Api.get("checkinsMine");
+  const list = document.getElementById("list");
+  document.getElementById("count").textContent = `${data.checkIns.length} เตียง`;
+
+  if (data.checkIns.length === 0) {
+    list.innerHTML = '<div class="card text-muted" style="grid-column:1/-1;text-align:center">ยังไม่มีเตียงที่ Check-in อยู่ — สแกน QR code ที่หัวเตียงเพื่อเริ่มดูแล</div>';
+    return;
+  }
+
+  list.innerHTML = data.checkIns
+    .map(
+      (c, i) => `
+    <div class="card stack">
+      <div class="row-between">
+        <div>
+          <h2>${c.bed.label}</h2>
+          <p class="text-xs text-muted">${c.bed.code}${c.bed.ward ? " · " + c.bed.ward : ""}</p>
+          ${c.bed.patient_name ? `<p class="text-xs">${c.bed.patient_name}</p>` : ""}
+        </div>
+        <span id="cd-${i}" class="badge"></span>
+      </div>
+      ${c.assessment ? `<span class="badge" style="background:${c.assessment.riskColor}">${c.assessment.riskLevel} · ทุก ${c.turnIntervalMinutes} นาที</span>` : ""}
+      <p class="text-xs text-muted">พลิกตัวล่าสุด ${formatThaiDateTime(c.lastTurnedAt)}</p>
+      <div class="row">
+        <button class="btn btn-primary" data-turn="${c.id}">✅ พลิกตัวแล้ว</button>
+        <a class="btn btn-secondary" href="checkin.html?bed=${encodeURIComponent(c.bed.code)}">ดูรายละเอียด</a>
+        <button class="btn btn-secondary" data-end="${c.id}">สิ้นสุด</button>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+
+  data.checkIns.forEach((c, i) => {
+    stoppers.push(mountCountdown(document.getElementById(`cd-${i}`), c.nextDueAt));
+  });
+
+  list.querySelectorAll("[data-turn]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      await Api.post("checkinTurn", { checkInId: btn.dataset.turn });
+      load();
+    })
+  );
+  list.querySelectorAll("[data-end]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      await Api.post("checkinEnd", { checkInId: btn.dataset.end });
+      load();
+    })
+  );
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

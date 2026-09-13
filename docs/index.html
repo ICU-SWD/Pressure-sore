@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>เข้าสู่ระบบ · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<main>
+  <div class="login-wrap">
+    <div class="login-logo">
+      <div class="emoji">🛡️</div>
+      <h1>Pressure Sore Guard</h1>
+      <p class="text-muted">ระบบป้องกันแผลกดทับ ICU</p>
+    </div>
+    <form id="loginForm" class="card stack">
+      <div>
+        <label class="text-xs">ชื่อผู้ใช้งาน</label>
+        <select id="userId" class="input"><option value="">กำลังโหลด...</option></select>
+      </div>
+      <div>
+        <label class="text-xs">รหัส PIN</label>
+        <input id="pin" class="input" type="password" inputmode="numeric" maxlength="8" placeholder="••••" style="letter-spacing:0.5em" />
+      </div>
+      <p id="error" class="text-danger text-xs" style="display:none"></p>
+      <button type="submit" class="btn btn-primary" style="width:100%">เข้าสู่ระบบ</button>
+    </form>
+    <p class="text-muted text-xs" style="text-align:center;margin-top:16px">
+      บัญชีตัวอย่าง (seed): พยาบาล PIN 1234 · admin PIN 0000
+    </p>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script>
+  const select = document.getElementById("userId");
+  const form = document.getElementById("loginForm");
+  const errorEl = document.getElementById("error");
+
+  Api.get("authUsers")
+    .then((data) => {
+      select.innerHTML = '<option value="">-- เลือกชื่อ --</option>' +
+        data.users.map((u) => `<option value="${u.id}">${u.name}${u.role === "ADMIN" ? " (ผู้ดูแลระบบ)" : ""}</option>`).join("");
+    })
+    .catch((e) => {
+      select.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ</option>';
+      errorEl.textContent = e.message;
+      errorEl.style.display = "block";
+    });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.style.display = "none";
+    const userId = select.value;
+    const pin = document.getElementById("pin").value;
+    if (!userId) {
+      errorEl.textContent = "กรุณาเลือกชื่อผู้ใช้งาน";
+      errorEl.style.display = "block";
+      return;
+    }
+    try {
+      const data = await Api.post("login", { userId, pin });
+      Api.setSession(data.token, data.user);
+      const params = new URLSearchParams(location.search);
+      location.href = params.get("next") || "dashboard.html";
+    } catch (err) {
+      errorEl.textContent = err.message || "เข้าสู่ระบบไม่สำเร็จ";
+      errorEl.style.display = "block";
+    }
+  });
+</script>
+</body>
+</html>

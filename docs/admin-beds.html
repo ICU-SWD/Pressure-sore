@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>เตียง & QR Code · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <h1>จัดการระบบ</h1>
+    <div class="tabs">
+      <a class="tab tab-active" href="admin-beds.html">เตียง & QR Code</a>
+      <a class="tab" href="admin-checklist.html">แบบประเมิน</a>
+      <a class="tab" href="admin-nurses.html">บัญชีผู้ใช้งาน</a>
+    </div>
+
+    <form id="addForm" class="card grid-3">
+      <input id="code" class="input" placeholder="รหัสเตียง เช่น ICU-07" />
+      <input id="label" class="input" placeholder="ชื่อเตียง เช่น เตียง 7" />
+      <input id="ward" class="input" placeholder="วอร์ด" value="ICU" />
+      <button class="btn btn-primary" type="submit">+ เพิ่มเตียง</button>
+      <p id="addError" class="text-danger text-xs" style="display:none;grid-column:1/-1"></p>
+    </form>
+
+    <div id="beds" class="grid-3"><p class="text-muted">กำลังโหลด...</p></div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireAdmin();
+renderNav("admin");
+
+async function load() {
+  const data = await Api.get("adminBeds");
+  const mount = document.getElementById("beds");
+  mount.innerHTML = data.beds
+    .map(
+      (bed) => `
+    <div class="card stack" style="${bed.active ? "" : "opacity:0.5"}">
+      <div class="row-between">
+        <div>
+          <h2>${bed.label}</h2>
+          <p class="text-xs text-muted">${bed.code}${bed.ward ? " · " + bed.ward : ""}</p>
+        </div>
+        ${bed.active ? `<button class="text-danger text-xs" data-deactivate="${bed.id}" style="background:none;border:none;cursor:pointer">ปิดใช้งาน</button>` : ""}
+      </div>
+      <div class="qr-img" id="qr-${bed.id}"></div>
+      <input class="input" placeholder="ชื่อผู้ป่วย" data-name="${bed.id}" value="${bed.patient_name || ""}" />
+      <input class="input" placeholder="HN" data-hn="${bed.id}" value="${bed.patient_hn || ""}" />
+      <button class="btn btn-secondary" data-save="${bed.id}">บันทึกข้อมูลผู้ป่วย</button>
+      <p class="text-xs text-muted" style="text-align:center;word-break:break-all">checkin.html?bed=${bed.code}</p>
+    </div>`
+    )
+    .join("");
+
+  data.beds.forEach((bed) => {
+    const checkinUrl = `${location.origin}${location.pathname.replace("admin-beds.html", "")}checkin.html?bed=${encodeURIComponent(bed.code)}`;
+    new QRCode(document.getElementById(`qr-${bed.id}`), { text: checkinUrl, width: 160, height: 160 });
+  });
+
+  mount.querySelectorAll("[data-save]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.save;
+      const patientName = mount.querySelector(`[data-name="${id}"]`).value;
+      const patientHn = mount.querySelector(`[data-hn="${id}"]`).value;
+      await Api.post("adminBedUpdate", { id, patientName, patientHn });
+      load();
+    })
+  );
+  mount.querySelectorAll("[data-deactivate]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      await Api.post("adminBedUpdate", { id: btn.dataset.deactivate, active: false });
+      load();
+    })
+  );
+}
+
+document.getElementById("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("addError");
+  errorEl.style.display = "none";
+  try {
+    await Api.post("adminBedCreate", {
+      code: document.getElementById("code").value.trim(),
+      label: document.getElementById("label").value.trim(),
+      ward: document.getElementById("ward").value.trim(),
+    });
+    document.getElementById("code").value = "";
+    document.getElementById("label").value = "";
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = "block";
+  }
+});
+
+load();
+</script>
+</body>
+</html>

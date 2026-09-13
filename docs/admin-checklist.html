@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>แบบประเมิน · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <h1>จัดการระบบ</h1>
+    <div class="tabs">
+      <a class="tab" href="admin-beds.html">เตียง & QR Code</a>
+      <a class="tab tab-active" href="admin-checklist.html">แบบประเมิน</a>
+      <a class="tab" href="admin-nurses.html">บัญชีผู้ใช้งาน</a>
+    </div>
+
+    <p class="text-muted text-xs">
+      กำหนดรายการประเมิน (Checklist) และคะแนนเพื่อจัดระดับความเสี่ยง → กำหนดรอบเวลาพลิกตัวอัตโนมัติ
+      การบันทึกจะสร้างเวอร์ชันใหม่และตั้งเป็นแบบประเมินที่ใช้งานอยู่ (แบบเดิมยังเก็บประวัติไว้)
+    </p>
+
+    <div class="card stack">
+      <div>
+        <label class="text-xs">ชื่อแบบประเมิน</label>
+        <input id="tplName" class="input" />
+      </div>
+
+      <div>
+        <h2>รายการประเมิน</h2>
+        <div id="itemsMount" class="stack"></div>
+        <button id="addItemBtn" class="btn btn-secondary" style="margin-top:8px">+ เพิ่มรายการประเมิน</button>
+      </div>
+
+      <div>
+        <h2>เกณฑ์คะแนน → ระดับความเสี่ยง → รอบเวลาพลิกตัว</h2>
+        <div id="rulesMount" class="stack"></div>
+        <button id="addRuleBtn" class="btn btn-secondary" style="margin-top:8px">+ เพิ่มเกณฑ์</button>
+      </div>
+
+      <p id="error" class="text-danger text-xs" style="display:none"></p>
+      <button id="publishBtn" class="btn btn-primary">บันทึก &amp; เผยแพร่แบบประเมินนี้</button>
+    </div>
+
+    <div class="card">
+      <h2>ประวัติแบบประเมิน</h2>
+      <ul id="history" class="text-xs" style="list-style:none;padding:0;margin:0"></ul>
+    </div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireAdmin();
+renderNav("admin");
+
+let items = [];
+let rules = [];
+let uidCounter = 0;
+function nextId(prefix) { uidCounter += 1; return `${prefix}-${Date.now()}-${uidCounter}`; }
+
+async function load() {
+  const data = await Api.get("adminTemplates");
+  const active = data.templates.find((t) => t.isActive);
+  if (active) {
+    document.getElementById("tplName").value = active.name;
+    items = active.items;
+    rules = active.rules;
+  } else {
+    document.getElementById("tplName").value = "แบบประเมินความเสี่ยงแผลกดทับ";
+  }
+  renderItems();
+  renderRules();
+
+  document.getElementById("history").innerHTML = data.templates
+    .map((t) => `<li style="padding:4px 0">${t.isActive ? '<span class="badge">ใช้งานอยู่</span> ' : ""}${t.name} <span class="text-muted">${new Date(t.createdAt).toLocaleString("th-TH")}</span></li>`)
+    .join("");
+}
+
+function renderItems() {
+  document.getElementById("itemsMount").innerHTML = items
+    .map(
+      (item, idx) => `
+    <div class="card stack" data-item-idx="${idx}">
+      <div class="row">
+        <input class="input" data-field="question" placeholder="คำถาม" value="${escapeAttr(item.question)}" />
+        <button class="text-danger text-xs" data-remove-item="${idx}" style="background:none;border:none;cursor:pointer">ลบ</button>
+      </div>
+      <div class="stack" data-options>
+        ${item.options
+          .map(
+            (opt, oi) => `
+          <div class="row" data-opt-idx="${oi}">
+            <input class="input" data-field="label" placeholder="ข้อความตัวเลือก" value="${escapeAttr(opt.label)}" />
+            <input class="input" style="width:80px" type="number" data-field="score" value="${opt.score}" />
+            <button class="text-danger text-xs" data-remove-opt="${oi}" style="background:none;border:none;cursor:pointer">ลบ</button>
+          </div>`
+          )
+          .join("")}
+      </div>
+      <button class="text-xs" data-add-opt style="background:none;border:none;color:var(--brand-500);cursor:pointer;text-align:left">+ เพิ่มตัวเลือก</button>
+    </div>`
+    )
+    .join("");
+
+  document.querySelectorAll("[data-item-idx]").forEach((card) => {
+    const idx = Number(card.dataset.itemIdx);
+    card.querySelector('[data-field="question"]').addEventListener("input", (e) => (items[idx].question = e.target.value));
+    card.querySelectorAll("[data-opt-idx]").forEach((row) => {
+      const oi = Number(row.dataset.optIdx);
+      row.querySelector('[data-field="label"]').addEventListener("input", (e) => (items[idx].options[oi].label = e.target.value));
+      row.querySelector('[data-field="score"]').addEventListener("input", (e) => (items[idx].options[oi].score = Number(e.target.value)));
+      row.querySelector("[data-remove-opt]").addEventListener("click", () => {
+        items[idx].options.splice(oi, 1);
+        renderItems();
+      });
+    });
+    card.querySelector("[data-add-opt]").addEventListener("click", () => {
+      items[idx].options.push({ label: "", score: 1 });
+      renderItems();
+    });
+    card.querySelector("[data-remove-item]").addEventListener("click", () => {
+      items.splice(idx, 1);
+      renderItems();
+    });
+  });
+}
+
+function renderRules() {
+  document.getElementById("rulesMount").innerHTML = rules
+    .map(
+      (rule, idx) => `
+    <div class="card" data-rule-idx="${idx}" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+      <input class="input" type="number" placeholder="คะแนนต่ำสุด" data-field="minScore" value="${rule.minScore}" />
+      <input class="input" type="number" placeholder="คะแนนสูงสุด" data-field="maxScore" value="${rule.maxScore}" />
+      <input class="input" placeholder="ชื่อระดับ" data-field="label" value="${escapeAttr(rule.label)}" />
+      <input class="input" type="color" data-field="color" value="${rule.color}" />
+      <input class="input" type="number" placeholder="ทุกกี่นาที" data-field="turnIntervalMinutes" value="${rule.turnIntervalMinutes}" />
+      <button class="text-danger text-xs" data-remove-rule style="background:none;border:none;cursor:pointer">ลบ</button>
+    </div>`
+    )
+    .join("");
+
+  document.querySelectorAll("[data-rule-idx]").forEach((card) => {
+    const idx = Number(card.dataset.ruleIdx);
+    ["minScore", "maxScore", "label", "color", "turnIntervalMinutes"].forEach((field) => {
+      card.querySelector(`[data-field="${field}"]`).addEventListener("input", (e) => {
+        rules[idx][field] = field === "minScore" || field === "maxScore" || field === "turnIntervalMinutes" ? Number(e.target.value) : e.target.value;
+      });
+    });
+    card.querySelector("[data-remove-rule]").addEventListener("click", () => {
+      rules.splice(idx, 1);
+      renderRules();
+    });
+  });
+}
+
+function escapeAttr(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+document.getElementById("addItemBtn").addEventListener("click", () => {
+  items.push({ id: nextId("item"), question: "", options: [{ label: "", score: 1 }, { label: "", score: 4 }] });
+  renderItems();
+});
+document.getElementById("addRuleBtn").addEventListener("click", () => {
+  rules.push({ minScore: 0, maxScore: 0, label: "", color: "#2f6fed", turnIntervalMinutes: 120 });
+  renderRules();
+});
+
+document.getElementById("publishBtn").addEventListener("click", async () => {
+  const errorEl = document.getElementById("error");
+  errorEl.style.display = "none";
+  if (items.some((i) => !i.question.trim() || i.options.some((o) => !String(o.label).trim()))) {
+    errorEl.textContent = "กรุณากรอกคำถามและตัวเลือกให้ครบทุกช่อง";
+    errorEl.style.display = "block";
+    return;
+  }
+  if (rules.some((r) => !r.label.trim())) {
+    errorEl.textContent = "กรุณากรอกชื่อระดับความเสี่ยงให้ครบทุกเกณฑ์";
+    errorEl.style.display = "block";
+    return;
+  }
+  try {
+    await Api.post("adminTemplateCreate", { name: document.getElementById("tplName").value, items, rules });
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = "block";
+  }
+});
+
+load();
+</script>
+</body>
+</html>

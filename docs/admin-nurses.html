@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>บัญชีผู้ใช้งาน · Pressure Sore Guard</title>
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+<nav id="nav"></nav>
+<main>
+  <div class="stack">
+    <h1>จัดการระบบ</h1>
+    <div class="tabs">
+      <a class="tab" href="admin-beds.html">เตียง & QR Code</a>
+      <a class="tab" href="admin-checklist.html">แบบประเมิน</a>
+      <a class="tab tab-active" href="admin-nurses.html">บัญชีผู้ใช้งาน</a>
+    </div>
+
+    <form id="addForm" class="card grid-3">
+      <input id="name" class="input" placeholder="ชื่อ-นามสกุล" />
+      <select id="role" class="input"><option value="NURSE">พยาบาล</option><option value="ADMIN">ผู้ดูแลระบบ</option></select>
+      <input id="pin" class="input" placeholder="PIN (อย่างน้อย 4 หลัก)" />
+      <button class="btn btn-primary" type="submit">+ เพิ่มผู้ใช้งาน</button>
+      <p id="addError" class="text-danger text-xs" style="display:none;grid-column:1/-1"></p>
+    </form>
+
+    <p class="text-muted text-xs">
+      รหัสลงทะเบียน LINE: ให้พยาบาลเพิ่มเพื่อน LINE Official Account ของหน่วยงาน แล้วพิมพ์ส่ง "รหัสลงทะเบียน" ของตัวเอง
+      (แสดงในตารางด้านล่าง) เพื่อรับการแจ้งเตือนผ่าน LINE — ดูวิธีตั้งค่า LINE OA ใน GAS_SYSTEM.md
+    </p>
+
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>ชื่อ</th><th>บทบาท</th><th>สถานะ</th><th>LINE</th><th>การจัดการ</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="5" class="text-muted">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+Api.requireAdmin();
+renderNav("admin");
+
+async function load() {
+  const data = await Api.get("adminNurses");
+  document.getElementById("tbody").innerHTML = data.users
+    .map(
+      (u) => `
+    <tr>
+      <td><b>${u.name}</b></td>
+      <td>${u.role === "ADMIN" ? "ผู้ดูแลระบบ" : "พยาบาล"}</td>
+      <td><span class="badge ${u.active ? "badge-low" : ""}">${u.active ? "ใช้งาน" : "ปิดใช้งาน"}</span></td>
+      <td class="text-xs">${u.lineLinked ? '<span class="badge badge-low">เชื่อมแล้ว</span>' : `รหัส: <b>${u.lineRegCode || "-"}</b>`}</td>
+      <td class="text-xs">
+        <a href="#" data-pin="${u.id}" data-name="${u.name}">ตั้ง PIN ใหม่</a> ·
+        <a href="#" data-toggle="${u.id}" data-active="${u.active}">${u.active ? "ปิดใช้งาน" : "เปิดใช้งาน"}</a>
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  document.querySelectorAll("[data-pin]").forEach((a) =>
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const pin = prompt(`ตั้งรหัส PIN ใหม่สำหรับ ${a.dataset.name} (อย่างน้อย 4 หลัก)`);
+      if (!pin || pin.length < 4) return;
+      await Api.post("adminNurseUpdate", { id: a.dataset.pin, pin });
+      load();
+    })
+  );
+  document.querySelectorAll("[data-toggle]").forEach((a) =>
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      await Api.post("adminNurseUpdate", { id: a.dataset.toggle, active: a.dataset.active !== "true" });
+      load();
+    })
+  );
+}
+
+document.getElementById("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("addError");
+  errorEl.style.display = "none";
+  try {
+    await Api.post("adminNurseCreate", {
+      name: document.getElementById("name").value.trim(),
+      role: document.getElementById("role").value,
+      pin: document.getElementById("pin").value,
+    });
+    document.getElementById("name").value = "";
+    document.getElementById("pin").value = "";
+    load();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = "block";
+  }
+});
+
+load();
+</script>
+</body>
+</html>
