@@ -14,12 +14,12 @@
 self.APP_CONFIG = {
   API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
   firebaseConfig: {
-    apiKey: "PASTE_FROM_FIREBASE_CONSOLE",
-    authDomain: "PASTE_FROM_FIREBASE_CONSOLE",
-    projectId: "PASTE_FROM_FIREBASE_CONSOLE",
-    storageBucket: "PASTE_FROM_FIREBASE_CONSOLE",
-    messagingSenderId: "PASTE_FROM_FIREBASE_CONSOLE",
-    appId: "PASTE_FROM_FIREBASE_CONSOLE",
+    apiKey: "AIzaSyCfO7L1uWM0QQbPqby--nqMXWFNqD71Nsg",
+    authDomain: "pressure-sore-guard.firebaseapp.com",
+    projectId: "pressure-sore-guard",
+    storageBucket: "pressure-sore-guard.firebasestorage.app",
+    messagingSenderId: "65601883430",
+    appId: "1:65601883430:web:1a2c9402bc33ff196645e7",
   },
   FIREBASE_VAPID_KEY: "PASTE_WEB_PUSH_CERTIFICATE_KEY_FROM_FIREBASE_CONSOLE",
 };
