@@ -1,0 +1,138 @@
+// Pressure Sore Prevention Monitoring System
+// Prototype schema (SQLite for easy local/dev use — swap provider for Postgres in production)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Nurses and admins. PIN is stored hashed (see src/lib/auth.ts).
+// role is a string ("ADMIN" | "NURSE") rather than a native enum because
+// SQLite (used for this prototype) has no enum support in Prisma.
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  role      String   @default("NURSE")
+  pinHash   String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  checkIns          CheckIn[]
+  assessments       Assessment[]
+  turnLogs          TurnLog[]
+  pushSubscriptions PushSubscription[]
+}
+
+// A physical ICU bed, identified by the code embedded in its printed QR code.
+model Bed {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  label       String
+  ward        String?
+  patientName String?
+  patientHn   String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  assessments Assessment[]
+  checkIns    CheckIn[]
+}
+
+// Admin-configurable checklist/scoring template. Items and risk->interval
+// rules are stored as JSON so admins can redesign the assessment without a
+// schema change (per requirement: "อาจมีการเปลี่ยนแปลงทีหลัง").
+model ChecklistTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  // JSON: [{ id, question, options: [{ label, score }] }]
+  itemsJson String
+  // JSON: [{ minScore, maxScore, label, color, turnIntervalMinutes }]
+  rulesJson String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  assessments Assessment[]
+}
+
+// One filled-out checklist for a given bed/patient at a point in time.
+model Assessment {
+  id                  String   @id @default(cuid())
+  templateId          String
+  template            ChecklistTemplate @relation(fields: [templateId], references: [id])
+  bedId               String
+  bed                 Bed      @relation(fields: [bedId], references: [id])
+  nurseId             String
+  nurse               User     @relation(fields: [nurseId], references: [id])
+  // JSON: { [itemId]: optionIndex }
+  answersJson         String
+  totalScore          Int
+  riskLevel           String
+  riskColor           String
+  turnIntervalMinutes Int
+  createdAt           DateTime @default(now())
+
+  checkIns CheckIn[]
+}
+
+// A nurse "checked in" at a bedside; starts the turning-reminder timer.
+// A nurse can have several ACTIVE check-ins at once (1:2+ ratio).
+// status is a string ("ACTIVE" | "ENDED") — see note on User.role re: SQLite enums.
+model CheckIn {
+  id                  String      @id @default(cuid())
+  bedId               String
+  bed                 Bed         @relation(fields: [bedId], references: [id])
+  nurseId             String
+  nurse               User        @relation(fields: [nurseId], references: [id])
+  assessmentId        String?
+  assessment          Assessment? @relation(fields: [assessmentId], references: [id])
+  turnIntervalMinutes Int
+  startedAt           DateTime    @default(now())
+  lastTurnedAt        DateTime    @default(now())
+  nextDueAt           DateTime
+  status              String      @default("ACTIVE")
+  endedAt             DateTime?
+
+  turnLogs          TurnLog[]
+  notificationLogs  NotificationLog[]
+
+  @@index([status, nextDueAt])
+  @@index([bedId, status])
+}
+
+// History of every turn performed, for audit / compliance reporting.
+model TurnLog {
+  id        String   @id @default(cuid())
+  checkInId String
+  checkIn   CheckIn  @relation(fields: [checkInId], references: [id])
+  nurseId   String
+  nurse     User     @relation(fields: [nurseId], references: [id])
+  turnedAt  DateTime @default(now())
+  note      String?
+}
+
+// Web Push subscription registered from a nurse's device/browser.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+// Record of reminder pushes sent, so the scheduler doesn't spam duplicates.
+// type is a string ("DUE" | "OVERDUE") — see note on User.role re: SQLite enums.
+model NotificationLog {
+  id        String   @id @default(cuid())
+  checkInId String
+  checkIn   CheckIn  @relation(fields: [checkInId], references: [id])
+  type      String
+  sentAt    DateTime @default(now())
+
+  @@index([checkInId, type])
+}

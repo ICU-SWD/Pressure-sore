@@ -1,0 +1,14 @@
+{
+  "name": "Pressure Sore Guard",
+  "short_name": "PS Guard",
+  "description": "ระบบดูแลผู้ป่วยหนักเพื่อป้องกันการเกิดแผลกดทับ",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef7ff",
+  "theme_color": "#2f6fed",
+  "lang": "th",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
